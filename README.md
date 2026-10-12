@@ -2,6 +2,8 @@
 
 A spider-like crawler reads a structured AI prompt word by word. Each prompt section is mapped as a particle cloud. The crawler flags vague words, links terms that repeat across sections, and scores how complete the spec is.
 
+**Live demo: [kakiizart.github.io/prompt-crawler](https://kakiizart.github.io/prompt-crawler/)**
+
 ![Prompt Crawler reading the context section of a sample prompt](docs/crawl.png)
 
 ## What it does
@@ -17,7 +19,7 @@ A spider-like crawler reads a structured AI prompt word by word. Each prompt sec
 
 ## Run it
 
-It's one HTML file. There is no build step and nothing to install.
+The quickest way is the [live demo](https://kakiizart.github.io/prompt-crawler/). To run it locally: it's one HTML file, with no build step and nothing to install.
 
 ```bash
 git clone https://github.com/kakiizart/prompt-crawler.git
