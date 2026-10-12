@@ -1,0 +1,1208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="A spider crawler reads a structured AI prompt word by word, flags vague words as questions, links repeated terms and scores the spec live.">
+<title>Prompt Crawler</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fragment+Mono&family=Martian+Mono:wght@400;600;700&display=swap">
+<style>
+/* Layout: one dark instrument frame. HUD strip, stage tabs, live crawl map, six readout panels, questions to ask, prompt editor. Single dark look by design. */
+:root{
+  color-scheme: dark;
+  --bg:#040406;
+  --frame:#07070b;
+  --panel:#0a0a10;
+  --line:#191922;
+  --line-2:#2a2a37;
+  --fg:#dedde8;
+  --dim:#7a7a8e;
+  --faint:#464656;
+  --pink:#ff5c8a;
+  --cyan:#5cb8f0;
+  --teal:#5fd3b0;
+  --amber:#f0c060;
+  --ink:#12060b;
+  --display:"Martian Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --mono:"Fragment Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+html,body{background:var(--bg)}
+body{margin:0;-webkit-text-size-adjust:100%}
+[hidden]{display:none!important}
+body{color:var(--fg);font:12px/1.5 var(--mono);padding-inline:16px;padding-block:16px 36px}
+*,*::before,*::after{box-sizing:border-box}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+.frame{max-width:1320px;margin:0 auto;background:var(--frame);border:1px solid var(--line);display:flex;flex-direction:column}
+
+.hud{display:flex;flex-wrap:wrap;align-items:center;gap:4px 16px;padding:9px 12px;border-bottom:1px solid var(--line);font-size:10px;color:var(--dim);letter-spacing:.07em;text-transform:uppercase;font-variant-numeric:tabular-nums}
+.hud b{color:var(--fg);font-weight:400}
+.hud .brand{color:var(--faint)}
+.hud .brand b{font-family:var(--display);font-weight:600;text-transform:none;letter-spacing:0;font-size:11px}
+.hud .studio{margin-left:auto;color:var(--pink);text-transform:none;letter-spacing:.02em}
+
+.tabs{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:3px;padding:7px 12px;border-bottom:1px solid var(--line)}
+.tab{font:inherit;font-size:10px;letter-spacing:.03em;color:var(--faint);background:transparent;border:0;border-bottom:2px solid var(--line);padding:5px 2px;cursor:pointer;text-align:center;transition:color .25s,background-color .25s,border-color .25s}
+.tab:hover{color:var(--fg)}
+.tab.is-done{color:var(--tab);border-bottom-color:var(--tab);opacity:.7}
+.tab.is-active{background:var(--tab);border-bottom-color:var(--tab);color:#0a0a0f;opacity:1}
+.tab:focus-visible,.btn:focus-visible,.seg button:focus-visible,textarea:focus-visible,summary:focus-visible{outline:1px solid var(--pink);outline-offset:2px}
+
+.bar{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px 12px;padding:8px 12px;border-bottom:1px solid var(--line)}
+.status{font-size:10.5px;color:var(--dim);letter-spacing:.03em;min-width:0}
+.status b{color:var(--fg);font-weight:400}
+.ctrls{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.btn{font:inherit;font-size:10.5px;color:var(--fg);background:transparent;border:1px solid var(--line-2);padding:5px 10px;cursor:pointer;letter-spacing:.03em}
+.btn:hover{border-color:var(--dim)}
+.btn--hot{border-color:var(--pink);color:var(--pink)}
+.btn--hot:hover{background:rgba(255,92,138,.08);border-color:var(--pink)}
+.seg{display:flex;border:1px solid var(--line-2)}
+.seg button{font:inherit;font-size:10.5px;background:transparent;color:var(--dim);border:0;padding:5px 8px;cursor:pointer;font-variant-numeric:tabular-nums}
+.seg button[aria-pressed="true"]{background:var(--line-2);color:var(--fg)}
+
+.stage{position:relative;height:clamp(360px,62vh,660px);border-bottom:1px solid var(--line);overflow:hidden;background:#07070b}
+.stage canvas{display:block;width:100%;height:100%}
+.sechead{position:absolute;left:12px;top:12px;pointer-events:none;border-left:2px solid var(--sec,#ece9f5);padding:1px 0 1px 10px;transition:border-color .3s}
+.sechead__num{font-family:var(--display);font-weight:600;font-size:clamp(14px,1.9vw,19px);letter-spacing:.02em;color:var(--fg);text-shadow:0 0 12px #07070b}
+.sechead__sub{font-size:10px;color:var(--sec,#ece9f5);margin-top:3px;letter-spacing:.03em;text-shadow:0 0 8px #07070b}
+
+.panels{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px;padding:6px}
+.panel{border:1px solid var(--line);background:var(--panel);padding:8px 9px;display:flex;flex-direction:column;gap:7px;min-width:0;height:246px;overflow:hidden}
+.ph{display:flex;justify-content:space-between;gap:6px;font-size:9px;letter-spacing:.09em;text-transform:uppercase;color:var(--fg);font-variant-numeric:tabular-nums}
+.ph span:last-child{color:var(--dim);text-transform:none;letter-spacing:.03em}
+.ph .live{color:var(--teal)!important}
+.pc{display:block;width:100%}
+.pc--radar{height:104px}
+.pc--heat{height:86px}
+.pc--score{height:124px}
+.pfoot{margin-top:auto;font-size:8.5px;color:var(--faint);letter-spacing:.04em}
+
+.log{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;font-size:9.5px;line-height:1.62;font-variant-numeric:tabular-nums}
+.log div{display:flex;gap:7px;white-space:nowrap;min-width:0;opacity:.55}
+.log div:last-child,.log div:nth-last-child(2),.log div:nth-last-child(3){opacity:1}
+.log .tm{color:var(--faint)}
+.log .vb{width:3.1em;flex:none;color:var(--dim)}
+.log .vb.link{color:var(--teal)}
+.log .vb.flag{color:var(--pink)}
+.log .vb.walk{color:var(--cyan)}
+.log .vb.ship{color:var(--amber)}
+.log .tx{overflow:hidden;text-overflow:ellipsis;color:var(--fg)}
+
+.secs{display:flex;flex-direction:column;gap:7px}
+.srow{display:flex;flex-direction:column;gap:3px;font-size:9.5px}
+.srow .sl{display:flex;justify-content:space-between;color:var(--faint);font-variant-numeric:tabular-nums}
+.srow.done .sl{color:var(--fg)}
+.srow.active .sl{color:var(--c)}
+.srow.missing .sl span:last-child{color:var(--pink)}
+.sb{height:2px;background:var(--line)}
+.sb i{display:block;height:100%;background:var(--c);transition:width .2s linear}
+
+.kbars{display:flex;flex-direction:column;gap:5px}
+.kb{display:grid;grid-template-columns:6em minmax(0,1fr) 1.6em;gap:6px;align-items:center;font-size:9px;color:var(--dim);font-variant-numeric:tabular-nums}
+.kb .tr{height:4px;background:var(--line)}
+.kb .tr i{display:block;height:100%;background:var(--teal);transition:width .3s}
+.kb b{font-weight:400;color:var(--fg);text-align:right}
+
+.rate{display:flex;flex-direction:column;gap:1px}
+.rate .lbl{font-size:8.5px;color:var(--dim);letter-spacing:.04em}
+.rate b{font-family:var(--display);font-weight:600;font-size:15px;font-variant-numeric:tabular-nums}
+.kv{display:flex;flex-direction:column;gap:1px;font-size:9.5px;font-variant-numeric:tabular-nums}
+.kv div{display:flex;justify-content:space-between;color:var(--dim)}
+.kv b{font-weight:400;color:var(--fg)}
+.kv .g b{color:var(--teal)}
+
+.grade{font-size:9.5px;color:var(--fg);text-align:center;letter-spacing:.03em}
+.flags{display:flex;flex-direction:column;gap:1px;font-size:9.5px}
+.flags b{font-weight:400;color:var(--pink)}
+.flags span{color:var(--dim);font-size:8.5px}
+
+.code{margin:0;flex:1;min-height:0;overflow:auto;font:9.5px/1.6 var(--mono);color:#b9b9c8;white-space:pre}
+.code .cm{color:var(--faint)}
+.code .st{color:var(--amber)}
+.code .kw{color:var(--pink)}
+.code .nu{color:var(--cyan)}
+.code .fn{color:var(--teal)}
+.code .cur{display:inline-block;width:.6em;height:1.05em;vertical-align:-2px;background:var(--pink);animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+
+.qa{border-top:1px solid var(--line);padding:14px 12px 16px;display:flex;flex-direction:column;gap:10px}
+.qa header{display:flex;justify-content:space-between;align-items:center;gap:8px 12px;flex-wrap:wrap}
+.qa h2{font-family:var(--display);font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;margin:0}
+.qa h2 span{font-family:var(--mono);font-weight:400;text-transform:none;letter-spacing:.02em;color:var(--pink);margin-left:8px;font-size:11px}
+.qlist{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.qlist li{display:grid;grid-template-columns:2.2em 7.4em minmax(0,1fr);gap:10px;align-items:baseline;padding:8px 10px;border:1px solid var(--line);border-left:2px solid var(--c,var(--line));background:var(--panel)}
+.qn{color:var(--faint);font-variant-numeric:tabular-nums;font-size:10px}
+.qs{color:var(--c);font-size:9.5px;letter-spacing:.07em}
+.qt{color:var(--fg);font-size:12px;min-width:0}
+.qx{display:block;color:var(--dim);font-size:10.5px;margin-top:3px}
+.qx mark{background:transparent;color:var(--pink);text-decoration:underline;text-decoration-style:wavy;text-underline-offset:3px}
+.qlist li.qempty{grid-template-columns:minmax(0,1fr);color:var(--dim)}
+.copyfb{width:100%;min-height:120px;background:#050508;color:var(--fg);border:1px solid var(--line-2);font:11px/1.5 var(--mono);padding:8px}
+.copynote{font-size:10.5px;color:var(--dim)}
+
+.editor{border-top:1px solid var(--line)}
+.editor summary{cursor:pointer;padding:12px;font-family:var(--display);font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;list-style:none;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.editor summary::-webkit-details-marker{display:none}
+.editor summary::before{content:"+";color:var(--pink);font-family:var(--mono)}
+.editor[open] summary::before{content:"\2212"}
+.editor summary span{font-family:var(--mono);font-weight:400;text-transform:none;letter-spacing:.02em;color:var(--dim);font-size:11px}
+.ed{padding:0 12px 16px;display:flex;flex-direction:column;gap:10px}
+.hint{margin:0;color:var(--dim);font-size:11px;max-width:72ch}
+.hint b{color:var(--fg);font-weight:400}
+textarea#promptInput{width:100%;min-height:260px;resize:vertical;background:#050508;color:var(--fg);border:1px solid var(--line-2);font:12px/1.6 var(--mono);padding:10px 12px}
+.edrow{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+#edStatus{font-size:10.5px;color:var(--dim)}
+
+.foot{max-width:1320px;margin:12px auto 0;color:var(--faint);font-size:10.5px;line-height:1.6}
+.foot p{margin:0;max-width:80ch}
+
+@media (max-width:1100px){.panels{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:640px){
+  .panels{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tabs{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .stage{height:420px}
+  .code{font-size:8.5px}
+  .hud{gap:3px 11px}
+  .qlist li{grid-template-columns:2em minmax(0,1fr)}
+  .qlist li .qt{grid-column:2}
+  .qlist li.qempty .qt{grid-column:auto}
+}
+@media (prefers-reduced-motion:reduce){
+  .code .cur{animation:none}
+  .sb i,.kb .tr i,.tab{transition:none}
+}
+</style>
+</head>
+<body>
+<main class="frame">
+  <header class="hud" aria-label="Crawler status">
+    <span class="brand">swarm <b>prompt-crawler</b></span>
+    <span>legs <b>16</b></span>
+    <span>tentacles <b>22</b></span>
+    <span>words read <b id="hWords">0/0</b></span>
+    <span>links <b id="hLinks">0</b></span>
+    <span>flags <b id="hFlags">0</b></span>
+    <span>t <b id="hT">0.00</b></span>
+    <span>frame <b id="hFrame">0000</b></span>
+    <span class="studio">studio.prompt</span>
+  </header>
+
+  <nav class="tabs" id="tabs" aria-label="Prompt sections"></nav>
+
+  <div class="bar">
+    <div class="status" id="status" aria-live="off">starting</div>
+    <div class="ctrls">
+      <button class="btn" id="playBtn" type="button">Pause</button>
+      <button class="btn" id="replayBtn" type="button">&#8635; Replay</button>
+      <div class="seg" role="group" aria-label="Crawl speed">
+        <button type="button" data-speed="0.5" aria-pressed="false">0.5&times;</button>
+        <button type="button" data-speed="1" aria-pressed="true">1&times;</button>
+        <button type="button" data-speed="2" aria-pressed="false">2&times;</button>
+        <button type="button" data-speed="4" aria-pressed="false">4&times;</button>
+      </div>
+      <button class="btn btn--hot" id="editBtn" type="button">Edit prompt</button>
+    </div>
+  </div>
+
+  <div class="stage" id="stage">
+    <canvas id="map" role="img" aria-label="A spider-like crawler walks through particle clouds, one per prompt section, tagging and linking words as it reads them."></canvas>
+    <div class="sechead" id="sechead">
+      <div class="sechead__num" id="secNum">01 ROLE</div>
+      <div class="sechead__sub" id="secSub">who the model is</div>
+    </div>
+  </div>
+
+  <section class="panels" aria-label="Crawler readouts">
+    <div class="panel">
+      <div class="ph"><span>Crawl log</span><span id="pRate">0 w/s</span></div>
+      <div class="log" id="log"></div>
+    </div>
+    <div class="panel">
+      <div class="ph"><span>Sections</span><span>7</span></div>
+      <div class="secs" id="secs"></div>
+      <div class="pfoot">words &rarr; kinds &rarr; links</div>
+    </div>
+    <div class="panel">
+      <div class="ph"><span>Coverage radar</span><span class="live">live</span></div>
+      <canvas class="pc pc--radar" id="radar" aria-hidden="true"></canvas>
+      <div class="kbars" id="kbars"></div>
+    </div>
+    <div class="panel">
+      <div class="ph"><span>Word heat</span><span id="pTotal">0</span></div>
+      <canvas class="pc pc--heat" id="heat" aria-hidden="true"></canvas>
+      <div class="rate"><span class="lbl">reading rate</span><b id="pWpm">0/m</b></div>
+      <div class="kv" id="kv"></div>
+    </div>
+    <div class="panel">
+      <div class="ph"><span>Spec score</span><span class="live">live</span></div>
+      <canvas class="pc pc--score" id="score" aria-hidden="true"></canvas>
+      <div class="grade" id="grade">scoring as it reads</div>
+      <div class="flags"><b id="pFlags">flags to ask &middot; 0</b><span>ask, don't guess</span></div>
+    </div>
+    <div class="panel">
+      <div class="ph"><span>crawler.py</span><span id="pLines">0/14</span></div>
+      <pre class="code" id="code"></pre>
+    </div>
+  </section>
+
+  <section class="qa" aria-labelledby="qaTitle">
+    <header>
+      <h2 id="qaTitle">Questions to ask<span id="qCount"></span></h2>
+      <button class="btn" id="copyBtn" type="button">Copy questions</button>
+    </header>
+    <ol class="qlist" id="qList"></ol>
+    <p class="copynote" id="copyNote" hidden>Copy is blocked here. The text is selected below, so press Ctrl+C or Cmd+C.</p>
+    <textarea class="copyfb" id="copyFb" readonly hidden aria-label="Questions as plain text"></textarea>
+  </section>
+
+  <details class="editor" id="editor">
+    <summary>Edit the prompt <span>paste your own and crawl it</span></summary>
+    <div class="ed">
+      <p class="hint">Start each section with its name and a colon: <b>ROLE, OBJECTIVE, CONTEXT, ROLES, RULES, REVIEW, START</b>. A missing section becomes a question. Text before the first header counts as context. Your draft stays in this browser.</p>
+      <label class="sr" for="promptInput">Prompt text</label>
+      <textarea id="promptInput" spellcheck="false"></textarea>
+      <div class="edrow">
+        <button class="btn btn--hot" id="crawlBtn" type="button">Crawl this prompt</button>
+        <button class="btn" id="sampleBtn" type="button">Load the sample</button>
+        <span id="edStatus" role="status"></span>
+      </div>
+    </div>
+  </details>
+</main>
+
+<footer class="foot">
+  <p>Visual idea from a prompt-crawler demo by defileo on X. This is an independent rebuild. Flags, links and the score come from simple word rules running in this page, not from an AI model.</p>
+</footer>
+
+<script>
+(function(){
+'use strict';
+
+/* ---------- constants ---------- */
+const W = 1600, H = 1050;
+const MONO = '"Fragment Mono", ui-monospace, Menlo, Consolas, monospace';
+const DISPLAY = '"Martian Mono", ui-monospace, Menlo, Consolas, monospace';
+const RM = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const KEY = 'prompt-crawler.draft';
+
+const SECTIONS = [
+  {key:'role',      label:'role',      title:'ROLE',      short:'ROL', axis:'ROLE',  color:'#ece9f5', weight:10, target:14, px:.62, py:.22, desc:'who the model is',           hint:'who should the model act as, and for whom?'},
+  {key:'objective', label:'objective', title:'OBJECTIVE', short:'OBJ', axis:'OBJ',   color:'#5cb8f0', weight:20, target:14, px:.38, py:.25, desc:'the one outcome',             hint:'what single result counts as done?'},
+  {key:'context',   label:'context',   title:'CONTEXT',   short:'CON', axis:'CTX',   color:'#ff5c8a', weight:15, target:18, px:.55, py:.48, desc:'sources · files · approvals', hint:'which sources, files and limits apply?'},
+  {key:'roles',     label:'roles',     title:'ROLES',     short:'ROL', axis:'TEAM',  color:'#b18cff', weight:10, target:14, px:.82, py:.50, desc:'who owns what',               hint:'who owns which decisions?'},
+  {key:'rules',     label:'rules',     title:'RULES',     short:'RUL', axis:'RULES', color:'#5fd3b0', weight:15, target:14, px:.33, py:.66, desc:'always · never',              hint:'what must always or never happen?'},
+  {key:'review',    label:'review',    title:'REVIEW',    short:'REV', axis:'REV',   color:'#f0c060', weight:20, target:10, px:.18, py:.82, desc:'how output is checked',       hint:'how will the output be checked before it ships?'},
+  {key:'start',     label:'start',     title:'START',     short:'STA', axis:'START', color:'#ff9a62', weight:10, target:8,  px:.68, py:.80, desc:'the first move',              hint:'what is the very first action?'}
+];
+const SHIP = {label:'ship', title:'SHIP', color:'#ece9f5'};
+SECTIONS.forEach(s => { s.x = s.px*W; s.y = s.py*H; s.rgb = hex(s.color); });
+
+const PINK = hex('#ff5c8a'), TEAL = hex('#5fd3b0'), AMBER = hex('#f0c060'), GREY = [148,150,172], WHITE=[255,255,255];
+
+const SAMPLE = `ROLE: You are the release editor for Tidepool, a studio's weekly newsletter. You turn raw notes into one finished issue and work only inside the shared drive.
+
+OBJECTIVE: Ship one release of issue 42 in one manual run. Start from the cover story, write four short posts, and make the result feel complete before anything goes out.
+
+CONTEXT: Sources live in /drive/issues and BRAND.md. Use Monday's call transcript as the main claim source and the metrics sheet for last week's wins. Saved examples sit in /examples. Messages to subscribers need approval. Purchases of any kind need approval. Some older posts are outdated.
+
+ROLES: Maya owns the cover story and approves every send. Dev checks numbers and links in the metrics sheet. Sam handles images and the subscriber list. You draft, they decide; nobody else edits the issue.
+
+RULES: Quote the transcript exactly or cite the source line. Keep each post under 200 words. Never send messages or make purchases without approval. Match the voice in BRAND.md and keep headlines engaging.
+
+REVIEW: Before handoff, list every claim with its source, flag anything you guessed, and confirm all links work. Maya signs off on the final draft.
+
+START: Read the transcript first, then send Maya a three-line outline for the cover story and wait for her reply.`;
+
+const STOP = new Set(('a an the and or but if then than so of to in on at by for from with without into onto over under as is are was were be been being it its this that these those you your yours we our us they their them he she his her i me my not no nor do does did done can could will would shall should may must each every any all both either neither only just also very too more most less least such own same other another which who whom whose what when where why how there here up down out off again once while before after above below between through during about against until because am has have had having let lets get gets got make makes made use uses used else nobody anything something everything').split(/\s+/));
+
+const VAGUE = {};
+'good great nice clean polished complete proper properly appropriate appropriately relevant engaging compelling better best high-quality professional solid reasonable robust interesting awesome perfect optimal efficient effective user-friendly modern fun'.split(' ').forEach(w => VAGUE[w] = 'quality');
+'some several various many few lots numerous etc certain stuff things'.split(' ').forEach(w => VAGUE[w] = 'quantity');
+'short long brief detailed concise lengthy'.split(' ').forEach(w => VAGUE[w] = 'size');
+'soon asap quickly later regularly often sometimes occasionally eventually promptly timely recently'.split(' ').forEach(w => VAGUE[w] = 'time');
+'maybe might possibly perhaps try ideally hopefully probably'.split(' ').forEach(w => VAGUE[w] = 'hedge');
+const VLABEL = {quality:'vague', quantity:'how many?', size:'how much?', time:'when?', hedge:'required?'};
+const QTEXT = {
+  quality:  w => `Define “${w}”. What check proves it?`,
+  quantity: w => `“${w}” is open-ended. Which ones, or how many?`,
+  size:     w => `How ${w}? Give a number of words, items or minutes.`,
+  time:     w => `“${w}” has no deadline. Give a date or a time window.`,
+  hedge:    w => `“${w}” makes this optional. Is it required?`
+};
+
+/* ---------- small helpers ---------- */
+function hex(h){ const n = parseInt(h.slice(1),16); return [n>>16&255, n>>8&255, n&255]; }
+function rgba(c,a){ return 'rgba(' + (c[0]|0) + ',' + (c[1]|0) + ',' + (c[2]|0) + ',' + (+a).toFixed(3) + ')'; }
+function mix(a,b,t){ return [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t]; }
+function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+function esc(s){ return String(s).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])); }
+function pad(n,l){ return String(n).padStart(l,'0'); }
+function rng(seed){ return function(){ seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function gauss(r){ let u = 0; while(!u) u = r(); return Math.sqrt(-2*Math.log(u)) * Math.cos(2*Math.PI*r()); }
+const $ = id => document.getElementById(id);
+
+/* ---------- parsing ---------- */
+const HEAD_RE = /^\s*(?:#{1,6}\s*)?(?:\*\*)?\s*(role|objective|goal|context|background|roles|team|owners|rules|constraints|review|checks|start|first step|kickoff)\s*(?:\*\*)?\s*[:\-–—]\s*/i;
+const ALIAS = {goal:'objective', background:'context', team:'roles', owners:'roles', constraints:'rules', checks:'review', 'first step':'start', kickoff:'start'};
+
+function parsePrompt(text){
+  const out = {}; SECTIONS.forEach(s => out[s.key] = []);
+  let cur = null;
+  for (const line of String(text).split(/\r?\n/)){
+    const m = line.match(HEAD_RE);
+    if (m){
+      let k = m[1].toLowerCase(); k = ALIAS[k] || k; cur = k;
+      const rest = line.slice(m[0].length); if (rest.trim()) out[cur].push(rest);
+    } else if (line.trim()) out[cur || 'context'].push(line);
+  }
+  const texts = {}; SECTIONS.forEach(s => texts[s.key] = out[s.key].join(' '));
+  return texts;
+}
+function tokens(text){
+  const out = [];
+  for (const raw of text.split(/\s+/)){
+    if (!raw) continue;
+    const d = raw.replace(/^[("'“‘\[*_`]+/, '').replace(/[)"'”’\],.;:!?*_`]+$/, '');
+    if (!d || !/[\p{L}\p{N}]/u.test(d)) continue;
+    const lc = d.toLowerCase();
+    out.push({display:d, lc, base:lc.replace(/['’]s$/, '')});
+  }
+  return out;
+}
+function stem(base){
+  let s = base.replace(/[^\p{L}\p{N}]/gu, '');
+  if (s.length > 4) s = s.replace(/(ing|ed)$/, '');
+  if (s.length > 3 && /[^s]s$/.test(s)) s = s.slice(0, -1);
+  if (s.length > 5 && /er$/.test(s)) s = s.slice(0, -2);
+  return s.slice(0, 6);
+}
+function classify(t, names){
+  const d = t.display, b = t.base;
+  if (/[\/\\]/.test(d) && d.length > 2) return 'file';
+  if (/^[\w-]+\.(md|txt|pdf|csv|json|docx?|xlsx?|pptx?|py|js|ts|html|ya?ml)$/i.test(d)) return 'file';
+  if (/^(approv\w*|sign-?offs?|signs|signed|permission\w*|consent\w*|greenlight\w*)$/.test(b)) return 'approval';
+  if (/^(sources?|transcripts?|data|sheets?|metrics?|reports?|notes|research|facts?|citations?|cite[sd]?|evidence|quotes?|stats?|statistics|figures)$/.test(b)) return 'claim';
+  if (names.has(b) || /^@\w/.test(d) || /^(editor|owner|manager|lead|designer|writer|reviewer|founder|client|customer|stakeholder|engineer|analyst|admin|producer|marketer)s?$/.test(b)) return 'owner';
+  if (/^(drive|slack|notion|email|gmail|calendar|github|figma|jira|linear|docs|api|cms|airtable|zapier|browser|terminal)$/.test(b)) return 'tool';
+  if (/\d/.test(d)) return 'limit';
+  return null;
+}
+
+/* ---------- model ---------- */
+let WORDS = [], SEC_WORDS = [], STEPS = [], TOTAL = 0;
+
+function buildModel(text){
+  const texts = parsePrompt(text);
+  const toks = SECTIONS.map(s => tokens(texts[s.key] || ''));
+  const names = new Set();
+  toks[3].forEach(t => {
+    if (/^\p{Lu}/u.test(t.display) && /^[\p{L}'’-]+$/u.test(t.display) && !STOP.has(t.base) && !VAGUE[t.base] && t.base.length >= 2) names.add(t.base);
+  });
+  WORDS = []; SEC_WORDS = SECTIONS.map(() => []);
+  toks.forEach((list, si) => {
+    const s = SECTIONS[si], n = list.length, r = rng(77 + si*131 + n);
+    list.forEach((t, i) => {
+      const vague = VAGUE[t.base] || null;
+      const stop = !vague && STOP.has(t.base);
+      const kind = stop ? null : classify(t, names);
+      const a = i*2.39996 + si*1.3;
+      const rad = 28 + 150*Math.sqrt((i + 0.5) / Math.max(n, 1));
+      const w = {
+        idx: WORDS.length, sec: si, i, display: t.display, base: t.base, stem: stem(t.base),
+        stop, vague, kind, link: -1,
+        x: s.x + Math.cos(a)*rad*1.12 + (r() - .5)*14,
+        y: s.y + Math.sin(a)*rad*0.86 + (r() - .5)*14,
+        read: false, readT: -99, linkT: -99
+      };
+      WORDS.push(w); SEC_WORDS[si].push(w.idx);
+    });
+  });
+  const seen = new Map();
+  for (const w of WORDS){
+    if (w.stop || w.vague) continue;
+    if (w.stem.length < 4 && w.kind !== 'owner') continue;
+    const arr = seen.get(w.stem);
+    if (arr){
+      for (let k = arr.length - 1; k >= 0; k--){ const p = WORDS[arr[k]]; if (p.sec !== w.sec){ w.link = p.idx; break; } }
+      arr.push(w.idx);
+    } else seen.set(w.stem, [w.idx]);
+  }
+  TOTAL = WORDS.length;
+  STEPS = [];
+  SECTIONS.forEach((s, si) => {
+    STEPS.push({type:'walk', s:si, dur: si === 0 ? 1.1 : 1.35});
+    const ids = SEC_WORDS[si];
+    if (!ids.length) STEPS.push({type:'missing', s:si, dur:0.9});
+    ids.forEach(id => {
+      const w = WORDS[id];
+      let d = w.stop ? 0.07 : 0.11 + Math.min(w.display.length, 12)*0.012;
+      if (w.vague) d += 0.55;
+      if (w.kind) d += 0.12;
+      if (w.link >= 0) d += 0.08;
+      STEPS.push({type:'read', w:id, s:si, dur:d});
+    });
+    STEPS.push({type:'end', s:si, dur:0.35});
+  });
+  STEPS.push({type:'ship', dur:Infinity});
+}
+
+/* ---------- run state ---------- */
+let S = null, speed = 1, now = performance.now()/1000;
+const cr = {x:W/2, y:H/2, vx:0, vy:0, ang:0, legT:0};
+const legs = Array.from({length:16}, (_, i) => ({ax:0, ay:0, word:-2, reach:1, stamp:-99, side: i%2 ? 1 : -1}));
+let curLeg = null;
+const heat = SECTIONS.map(() => 0);
+
+function freshState(playing){
+  return {
+    step:0, stepT:0, sec:0, phase:'walk', cur:-1, read:0, links:0, flags:0, t:0, frame:0, done:false,
+    secs: SECTIONS.map(() => ({read:0, flags:0, done:false})),
+    kinds: {claim:0, owner:0, approval:0, file:0, tool:0, limit:0}, owners: new Set(),
+    log: [], logDirty: true, questions: [], hist: [], histT: 0, score: 0, scoreView: 0,
+    radarView: SECTIONS.map(() => 0), rate: [], pulses: [], ver: 1, playing: playing
+  };
+}
+function clockStr(){ const d = new Date(); return pad(d.getHours(),2) + ':' + pad(d.getMinutes(),2); }
+function addLog(verb, text){ S.log.push({tm:clockStr(), verb, text}); if (S.log.length > 60) S.log.shift(); S.logDirty = true; }
+function snippetHtml(w){
+  const ids = SEC_WORDS[w.sec], a = Math.max(0, w.i - 4), b = Math.min(ids.length, w.i + 5);
+  const parts = [];
+  for (let k = a; k < b; k++){ const ww = WORDS[ids[k]]; parts.push(k === w.i ? '<mark>' + esc(ww.display) + '</mark>' : esc(ww.display)); }
+  return (a > 0 ? '…' : '') + parts.join(' ') + (b < ids.length ? '…' : '');
+}
+function sectionQuality(i){
+  const n = SEC_WORDS[i].length; if (!n) return 0;
+  return Math.min(1, n / SECTIONS[i].target) * Math.max(0.3, 1 - 0.2*S.secs[i].flags);
+}
+function computeScore(){
+  let total = 0;
+  SECTIONS.forEach((s, i) => { const n = SEC_WORDS[i].length; if (!n) return; total += s.weight * (S.secs[i].read / n) * sectionQuality(i); });
+  S.score = Math.round(total);
+}
+function applyStep(st, instant){
+  const T = instant ? now - 30 : now;
+  if (st.type === 'walk'){ S.sec = st.s; S.phase = 'walk'; S.cur = -1; addLog('walk', '→ ' + SECTIONS[st.s].label); }
+  else if (st.type === 'missing'){
+    S.phase = 'read'; S.flags++; S.secs[st.s].flags++;
+    addLog('flag', 'missing ' + SECTIONS[st.s].label);
+    S.questions.push({sec:st.s, text:'Add a ' + SECTIONS[st.s].title + ' section: ' + SECTIONS[st.s].hint, snip:''});
+  }
+  else if (st.type === 'read'){
+    S.phase = 'read';
+    const w = WORDS[st.w], ss = S.secs[w.sec];
+    w.read = true; w.readT = T; S.cur = w.idx; S.read++; ss.read++;
+    let verb = 'read';
+    if (w.kind){ S.kinds[w.kind]++; if (w.kind === 'owner') S.owners.add(w.stem); }
+    if (w.link >= 0){ S.links++; w.linkT = T; verb = 'link'; }
+    if (w.vague){
+      S.flags++; ss.flags++; verb = 'flag';
+      S.questions.push({sec:w.sec, text:QTEXT[w.vague](w.display.toLowerCase()), snip:snippetHtml(w)});
+    }
+    addLog(verb, w.display);
+    if (!instant){
+      S.rate.push(now);
+      S.pulses.push({x:w.x, y:w.y, t:now, c: w.vague ? PINK : SECTIONS[w.sec].rgb});
+      assignLeg(w);
+    }
+  }
+  else if (st.type === 'end'){ S.secs[st.s].done = true; }
+  else if (st.type === 'ship'){ S.done = true; S.phase = 'ship'; S.cur = -1; computeScore(); addLog('ship', 'score ' + S.score); }
+  computeScore();
+  S.ver++;
+}
+function advance(dt){
+  if (!S.playing || S.done) return;
+  let rem = dt * speed;
+  while (rem > 0 && !S.done){
+    const st = STEPS[S.step], left = st.dur - S.stepT;
+    if (rem < left){ S.stepT += rem; rem = 0; }
+    else { rem -= left; S.step++; S.stepT = 0; applyStep(STEPS[S.step], false); }
+  }
+}
+function secState(i){
+  if (S.done || i < S.sec) return 'done';
+  return i === S.sec ? 'active' : 'queued';
+}
+
+/* ---------- crawler legs ---------- */
+function oldestLeg(){ let L = legs[0]; for (const l of legs) if (l.stamp < L.stamp) L = l; return L; }
+function assignLeg(w){ const L = oldestLeg(); L.ax = w.x; L.ay = w.y; L.word = w.idx; L.reach = 0; L.stamp = now; curLeg = L; }
+function stepGround(){
+  const L = oldestLeg(), sp = Math.hypot(cr.vx, cr.vy);
+  const dir = sp > 5 ? Math.atan2(cr.vy, cr.vx) : Math.random()*6.283;
+  const a = dir + (Math.random() - .5)*2.3, d = 70 + Math.random()*120;
+  L.ax = cr.x + Math.cos(a)*d; L.ay = cr.y + Math.sin(a)*d*0.85; L.word = -1; L.reach = 0; L.stamp = now;
+}
+
+/* ---------- seeking ---------- */
+function seekTo(target, intro){
+  WORDS.forEach(w => { w.read = false; w.readT = -99; w.linkT = -99; });
+  S = freshState(S ? S.playing : true);
+  for (let i = 0; i <= target; i++){ S.step = i; applyStep(STEPS[i], i < target); }
+  S.stepT = 0;
+  if (intro){ cr.x = W*0.5; cr.y = H*0.55; }
+  else if (S.done){ cr.x = W*0.52; cr.y = H*0.52; }
+  else { cr.x = SECTIONS[S.sec].x; cr.y = SECTIONS[S.sec].y - 8; }
+  cr.vx = cr.vy = 0;
+  const pool = WORDS.filter(w => w.read && (S.done || w.sec === S.sec)).slice(-16);
+  legs.forEach((L, k) => {
+    const w = pool[k];
+    if (w){ L.ax = w.x; L.ay = w.y; L.word = w.idx; }
+    else { const a = k/16*6.283; L.ax = cr.x + Math.cos(a)*110; L.ay = cr.y + Math.sin(a)*90; L.word = -1; }
+    L.reach = 1; L.stamp = now - 1 + k*0.01;
+  });
+  curLeg = null;
+  S.hist = [S.score]; S.scoreView = intro ? 0 : S.score;
+  if (S.done) SECTIONS.forEach((_, i) => S.radarView[i] = sectionQuality(i));
+  lastQ = -1; lastVer = -1; lastTyped = -1;
+}
+function replay(){
+  seekTo(0, true);
+  cam.x = W/2; cam.y = H/2; cam.z = fitZ;
+  for (let i = 0; i < heat.length; i++) heat[i] = 0;
+}
+
+/* ---------- canvases ---------- */
+const stage = $('stage'), mapCv = $('map'), mctx = mapCv.getContext('2d');
+let mapW = 1, mapH = 1, dpr = 1, fitZ = 0.5, readZ = 1;
+const cam = {x:W/2, y:H/2, z:0.5};
+function resizeMap(){
+  dpr = Math.min(2, window.devicePixelRatio || 1);
+  mapW = Math.max(1, stage.clientWidth); mapH = Math.max(1, stage.clientHeight);
+  mapCv.width = Math.round(mapW*dpr); mapCv.height = Math.round(mapH*dpr);
+  fitZ = Math.min(mapW / W, mapH / H) * 0.98;
+  readZ = fitZ * (mapW < 640 ? 2.5 : 1.9);
+}
+resizeMap();
+cam.z = fitZ;
+
+const pcs = {};
+['radar','heat','score'].forEach(id => { pcs[id] = {cv:$(id), c:$(id).getContext('2d'), w:1, h:1}; });
+function sizePanel(p){
+  const r = p.cv.getBoundingClientRect(), d = Math.min(2, window.devicePixelRatio || 1);
+  p.w = Math.max(1, Math.round(r.width)); p.h = Math.max(1, Math.round(r.height));
+  p.cv.width = p.w*d; p.cv.height = p.h*d; p.c.setTransform(d,0,0,d,0,0);
+}
+Object.values(pcs).forEach(sizePanel);
+if ('ResizeObserver' in window){
+  new ResizeObserver(() => resizeMap()).observe(stage);
+  Object.values(pcs).forEach(p => new ResizeObserver(() => sizePanel(p)).observe(p.cv));
+} else window.addEventListener('resize', () => { resizeMap(); Object.values(pcs).forEach(sizePanel); });
+
+let mapVisible = true;
+if ('IntersectionObserver' in window) new IntersectionObserver(es => { mapVisible = es[0].isIntersecting; }).observe(stage);
+
+/* ---------- particle clouds ---------- */
+const BA = [0.2, 0.42, 0.75];
+function makeCloud(cx, cy, n, seed, spread){
+  const r = rng(seed);
+  const lobes = [], k = 4 + Math.floor(r()*3);
+  for (let i = 0; i < k; i++) lobes.push({x: cx + gauss(r)*70*spread, y: cy + gauss(r)*55*spread, sx: (45 + r()*55)*spread, sy: (35 + r()*45)*spread, w: 0.5 + r()});
+  const strands = []; for (let i = 0; i < 9; i++) strands.push({a: r()*6.283, len: 90 + r()*150, curl: (r() - .5)*1.6});
+  const wsum = lobes.reduce((a, l) => a + l.w, 0);
+  const b = [[],[],[]], tw = [];
+  let minx = 1e9, maxx = -1e9, miny = 1e9, maxy = -1e9;
+  for (let i = 0; i < n; i++){
+    let x, y;
+    if (r() < 0.2){
+      const s = strands[Math.floor(r()*strands.length)], t = r(), ang = s.a + s.curl*t;
+      x = cx + Math.cos(ang)*s.len*t*spread + gauss(r)*5; y = cy + Math.sin(ang)*s.len*t*0.8*spread + gauss(r)*5;
+    } else {
+      let pick = r()*wsum, L = lobes[0];
+      for (const l of lobes){ pick -= l.w; if (pick <= 0){ L = l; break; } }
+      x = L.x + gauss(r)*L.sx; y = L.y + gauss(r)*L.sy;
+    }
+    const p = {x, y, s: r() < 0.06 ? 2.2 : 0.8 + r()*0.9, ph: r()*6.283, f: 0.6 + r()*2};
+    minx = Math.min(minx, x); maxx = Math.max(maxx, x); miny = Math.min(miny, y); maxy = Math.max(maxy, y);
+    if (r() < 0.07) tw.push(p); else b[r() < 0.55 ? 0 : (r() < 0.7 ? 1 : 2)].push(p);
+  }
+  return {b, tw, minx, maxx, miny, maxy};
+}
+const perSec = clamp(Math.round(mapW*mapH / 850), 320, 950);
+const clouds = SECTIONS.map((s, i) => makeCloud(s.x, s.y, perSec, 1013 + i*7919, 1));
+const dust = (() => {
+  const r = rng(4242), b = [[],[],[]];
+  for (let i = 0; i < Math.round(perSec*0.9); i++) b[i%3].push({x: r()*W, y: r()*H, s: 0.7 + r()*0.8});
+  return b;
+})();
+
+/* ---------- map render ---------- */
+const textCache = new Map();
+function measure(c, font, t){ const k = font + '|' + t; let v = textCache.get(k); if (v === undefined){ c.font = font; v = c.measureText(t).width; textCache.set(k, v); } return v; }
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => textCache.clear());
+
+function updateWorld(dt){
+  // section heat
+  const kh = 1 - Math.exp(-dt*2.5);
+  SECTIONS.forEach((_, i) => {
+    const tgt = S.done ? 0.8 : i < S.sec ? 0.55 : i === S.sec ? (S.phase === 'walk' ? 0.7 : 1) : 0;
+    heat[i] += (tgt - heat[i]) * (RM ? 1 : kh);
+  });
+  // crawler body
+  let tx, ty;
+  if (S.done){ tx = W*0.52; ty = H*0.52; }
+  else {
+    const s = SECTIONS[S.sec]; tx = s.x; ty = s.y;
+    if (S.phase === 'read' && S.cur >= 0){ const w = WORDS[S.cur]; tx = s.x*0.78 + w.x*0.22; ty = s.y*0.78 + w.y*0.22; }
+  }
+  const K = 6*speed*speed, C = 2*Math.sqrt(K), sdt = Math.min(dt, 0.033);
+  cr.vx += (K*(tx - cr.x) - C*cr.vx)*sdt; cr.vy += (K*(ty - cr.y) - C*cr.vy)*sdt;
+  cr.x += cr.vx*sdt; cr.y += cr.vy*sdt;
+  const sp = Math.hypot(cr.vx, cr.vy);
+  if (sp > 20){
+    const ta = Math.atan2(cr.vy, cr.vx) + Math.PI/2;
+    let d = ta - cr.ang; while (d > Math.PI) d -= 2*Math.PI; while (d < -Math.PI) d += 2*Math.PI;
+    cr.ang += d * (1 - Math.exp(-dt*5));
+  }
+  cr.legT += dt*speed;
+  if (sp > 25 && cr.legT > 0.055){ cr.legT = 0; stepGround(); }
+  for (const L of legs) L.reach = Math.min(1, L.reach + dt*Math.max(1, speed)*6);
+  // camera
+  let cx, cy, cz;
+  if (S.done){ cx = W/2; cy = H/2; cz = fitZ; }
+  else {
+    const s = SECTIONS[S.sec]; cx = s.x; cy = s.y; cz = readZ;
+    if (S.phase === 'walk'){ cx = cr.x*0.6 + s.x*0.4; cy = cr.y*0.6 + s.y*0.4; cz = readZ*0.8; }
+    else if (S.cur >= 0){ const w = WORDS[S.cur]; cx = s.x*0.8 + w.x*0.2; cy = s.y*0.8 + w.y*0.2; }
+  }
+  if (!RM){ cx += Math.sin(now*0.13)*10; cy += Math.cos(now*0.1)*8; }
+  const k = RM ? 1 : 1 - Math.exp(-dt*1.6), kz = RM ? 1 : 1 - Math.exp(-dt*1.1);
+  cam.x += (cx - cam.x)*k; cam.y += (cy - cam.y)*k; cam.z += (cz - cam.z)*kz;
+  // panel easing
+  const ke = 1 - Math.exp(-dt*4);
+  S.scoreView += (S.score - S.scoreView) * (RM ? 1 : ke);
+  SECTIONS.forEach((_, i) => {
+    const n = SEC_WORDS[i].length, v = n ? (S.secs[i].read / n) * sectionQuality(i) : 0;
+    S.radarView[i] += (v - S.radarView[i]) * (RM ? 1 : ke);
+  });
+  // history + rate
+  if (S.playing && !S.done){ S.histT += dt; if (S.histT > 0.12){ S.histT = 0; S.hist.push(S.score); if (S.hist.length > 80) S.hist.shift(); } }
+  while (S.rate.length && now - S.rate[0] > 1.5) S.rate.shift();
+}
+
+function renderMap(){
+  const c = mctx, cw = mapW, ch = mapH, z = cam.z;
+  const ox = cw/2 - cam.x*z, oy = ch/2 - cam.y*z;
+  c.setTransform(dpr,0,0,dpr,0,0);
+  c.globalCompositeOperation = 'source-over'; c.globalAlpha = 1;
+  c.fillStyle = '#07070b'; c.fillRect(0, 0, cw, ch);
+  const x0 = -ox/z - 20, x1 = (cw - ox)/z + 20, y0 = -oy/z - 20, y1 = (ch - oy)/z + 20;
+  const ps = clamp(z*1.35, 0.75, 1.6);
+  c.globalCompositeOperation = 'lighter';
+
+  // glow per section
+  SECTIONS.forEach((s, i) => {
+    const h = heat[i], col = mix(GREY, s.rgb, h), gx = s.x*z + ox, gy = s.y*z + oy, gr = 260*z;
+    if (gx + gr < 0 || gx - gr > cw || gy + gr < 0 || gy - gr > ch) return;
+    const g = c.createRadialGradient(gx, gy, 0, gx, gy, gr);
+    g.addColorStop(0, rgba(col, 0.03 + 0.15*h)); g.addColorStop(0.55, rgba(col, 0.012 + 0.05*h)); g.addColorStop(1, rgba(col, 0));
+    c.fillStyle = g; c.fillRect(gx - gr, gy - gr, gr*2, gr*2);
+  });
+
+  // background dust
+  for (let b = 0; b < 3; b++){
+    c.fillStyle = rgba([120,122,142], [0.18,0.3,0.45][b]);
+    for (const p of dust[b]){ if (p.x < x0 || p.x > x1 || p.y < y0 || p.y > y1) continue; const sz = p.s*ps; c.fillRect(p.x*z + ox, p.y*z + oy, sz, sz); }
+  }
+
+  // clouds
+  clouds.forEach((cl, i) => {
+    if (cl.maxx < x0 || cl.minx > x1 || cl.maxy < y0 || cl.miny > y1) return;
+    const h = heat[i], col = mix(GREY, SECTIONS[i].rgb, h), am = 0.42 + 0.58*h;
+    for (let b = 0; b < 3; b++){
+      c.fillStyle = rgba(col, BA[b]*am);
+      for (const p of cl.b[b]){
+        if (p.x < x0 || p.x > x1 || p.y < y0 || p.y > y1) continue;
+        const sz = p.s*ps; c.fillRect(p.x*z + ox - sz/2, p.y*z + oy - sz/2, sz, sz);
+      }
+    }
+    c.fillStyle = rgba(mix(col, WHITE, 0.35), 1);
+    for (const p of cl.tw){
+      if (p.x < x0 || p.x > x1 || p.y < y0 || p.y > y1) continue;
+      c.globalAlpha = am * (RM ? 0.6 : 0.25 + 0.75*(0.5 + 0.5*Math.sin(now*p.f + p.ph)));
+      const sz = p.s*ps*1.2; c.fillRect(p.x*z + ox - sz/2, p.y*z + oy - sz/2, sz, sz);
+    }
+    c.globalAlpha = 1;
+  });
+
+  // links between repeated terms
+  c.setLineDash([2, 4]); c.lineWidth = 1;
+  for (const w of WORDS){
+    if (!w.read || w.link < 0) continue;
+    const p = WORDS[w.link];
+    const ax = p.x*z + ox, ay = p.y*z + oy, bx = w.x*z + ox, by = w.y*z + oy;
+    if (Math.max(ax, bx) < -50 || Math.min(ax, bx) > cw + 50 || Math.max(ay, by) < -50 || Math.min(ay, by) > ch + 50) continue;
+    const mx = (ax + bx)/2, my = (ay + by)/2, dx = bx - ax, dy = by - ay;
+    const age = now - w.linkT, fresh = age < 1.4 ? 1 - age/1.4 : 0;
+    c.strokeStyle = fresh > 0 ? rgba(mix([200,205,220], PINK, fresh), 0.22 + 0.65*fresh) : 'rgba(200,205,220,0.2)';
+    c.beginPath(); c.moveTo(ax, ay); c.quadraticCurveTo(mx - dy*0.22, my + dx*0.22, bx, by); c.stroke();
+  }
+  c.setLineDash([]);
+
+  // read nodes
+  for (const w of WORDS){
+    if (!w.read) continue;
+    const x = w.x*z + ox, y = w.y*z + oy;
+    if (x < -5 || x > cw + 5 || y < -5 || y > ch + 5) continue;
+    const act = secState(w.sec) === 'active';
+    c.fillStyle = rgba(w.vague ? PINK : SECTIONS[w.sec].rgb, act ? 0.95 : 0.55);
+    const r = w.stop ? 0.9 : (w.vague ? 2.3 : 1.6);
+    c.fillRect(x - r, y - r, r*2, r*2);
+  }
+
+  // read pulses
+  c.lineWidth = 1;
+  S.pulses = S.pulses.filter(p => now - p.t < 0.7);
+  for (const p of S.pulses){
+    const k = (now - p.t)/0.7;
+    c.strokeStyle = rgba(p.c, 0.8*(1 - k));
+    c.beginPath(); c.arc(p.x*z + ox, p.y*z + oy, 3 + k*22, 0, 6.283); c.stroke();
+  }
+
+  drawCrawler(c, ox, oy, z);
+
+  c.globalCompositeOperation = 'source-over';
+  drawTags(c, ox, oy, z, cw, ch, labelRects(c, ox, oy, z));
+  drawLabels(c, ox, oy, z, cw, ch);
+
+  const vg = c.createRadialGradient(cw/2, ch/2, Math.min(cw, ch)*0.35, cw/2, ch/2, Math.max(cw, ch)*0.75);
+  vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.6)');
+  c.fillStyle = vg; c.fillRect(0, 0, cw, ch);
+}
+
+function drawCrawler(c, ox, oy, z){
+  const bx = cr.x*z + ox, by = cr.y*z + oy;
+  const bs = clamp(z/1.1, 0.55, 1.2), rx = 15*bs, ry = 20*bs;
+
+  if (S.phase === 'walk' && !S.done){
+    const s = SECTIONS[S.sec];
+    c.strokeStyle = 'rgba(255,92,138,0.55)'; c.lineWidth = 1;
+    c.beginPath(); c.moveTo(bx, by); c.lineTo((s.x - 40)*z + ox, (s.y - 196)*z + oy); c.stroke();
+  }
+
+  // legs: dotted curves from the body to the words they hold
+  for (const L of legs){
+    if (L.word === -2) continue;
+    const ax = L.ax*z + ox, ay = L.ay*z + oy, dx = ax - bx, dy = ay - by, len = Math.hypot(dx, dy);
+    if (len < 3) continue;
+    const ux = dx/len, uy = dy/len, sx0 = bx + ux*rx*0.95, sy0 = by + uy*ry*0.95;
+    const bend = L.side*len*0.18, mx = (sx0 + ax)/2 - uy*bend, my = (sy0 + ay)/2 + ux*bend;
+    const isCur = L === curLeg && S.phase === 'read' && !S.done;
+    const n = Math.max(4, Math.floor(len/5)), upto = Math.floor(n*L.reach);
+    c.fillStyle = isCur ? 'rgba(255,92,138,0.95)' : (L.word >= 0 ? 'rgba(205,240,232,0.6)' : 'rgba(205,240,232,0.36)');
+    for (let k = 0; k <= upto; k++){
+      const t = k/n, it = 1 - t;
+      c.fillRect(it*it*sx0 + 2*it*t*mx + t*t*ax - 0.8, it*it*sy0 + 2*it*t*my + t*t*ay - 0.8, 1.6, 1.6);
+    }
+    if (L.reach >= 1){ c.beginPath(); c.arc(ax, ay, isCur ? 2.6 : 1.5, 0, 6.283); c.fill(); }
+  }
+
+  // tentacles
+  c.strokeStyle = 'rgba(170,240,225,0.42)'; c.lineWidth = 1; c.beginPath();
+  for (let i = 0; i < 22; i++){
+    const a = i/22*6.283 + (RM ? 0 : Math.sin(now*1.3 + i)*0.12) + cr.ang;
+    const ex = Math.cos(a), ey = Math.sin(a), r0x = bx + ex*rx, r0y = by + ey*ry;
+    const l = (8 + 9*(RM ? 0.5 : 0.5 + 0.5*Math.sin(now*2.1 + i*1.7)))*bs;
+    c.moveTo(r0x, r0y);
+    c.lineTo(r0x + ex*l + (RM ? 0 : Math.sin(now*3 + i)*2), r0y + ey*l + (RM ? 0 : Math.cos(now*2.6 + i)*2));
+  }
+  c.stroke();
+
+  // body
+  c.save(); c.translate(bx, by); c.rotate(cr.ang);
+  const halo = c.createRadialGradient(0, 0, 0, 0, 0, ry*2.6);
+  halo.addColorStop(0, 'rgba(95,211,176,0.26)'); halo.addColorStop(1, 'rgba(95,211,176,0)');
+  c.fillStyle = halo; c.beginPath(); c.arc(0, 0, ry*2.6, 0, 6.283); c.fill();
+  c.globalCompositeOperation = 'source-over';
+  c.fillStyle = 'rgba(6,26,28,0.92)'; c.beginPath(); c.ellipse(0, 0, rx, ry, 0, 0, 6.283); c.fill();
+  c.globalCompositeOperation = 'lighter';
+  c.strokeStyle = 'rgba(95,211,176,0.95)'; c.lineWidth = 1.4; c.stroke();
+  c.lineWidth = 0.8; c.strokeStyle = 'rgba(95,211,176,0.32)';
+  for (const k of [0.35, 0.7]){
+    c.beginPath(); c.ellipse(0, 0, rx*k, ry, 0, 0, 6.283); c.stroke();
+    c.beginPath(); c.ellipse(0, 0, rx, ry*k, 0, 0, 6.283); c.stroke();
+  }
+  const pulse = S.cur >= 0 ? Math.max(0, 1 - (now - WORDS[S.cur].readT)/0.35) : 0;
+  const cr0 = (3.2 + pulse*2.5)*bs;
+  const core = c.createRadialGradient(0, 0, 0, 0, 0, cr0*3);
+  core.addColorStop(0, 'rgba(255,92,138,0.9)'); core.addColorStop(1, 'rgba(255,92,138,0)');
+  c.fillStyle = core; c.beginPath(); c.arc(0, 0, cr0*3, 0, 6.283); c.fill();
+  c.fillStyle = '#ff7aa0'; c.beginPath(); c.arc(0, 0, cr0, 0, 6.283); c.fill();
+  c.restore();
+}
+
+function tagText(w){
+  const d = w.display.length > 22 ? w.display.slice(0, 21) + '…' : w.display;
+  if (w.vague) return d + ' · ⚑ ' + VLABEL[w.vague];
+  if (w.kind) return d + ' · ' + w.kind;
+  return d;
+}
+function overlap(a, b){ return a.x < b.x + b.w + 2 && b.x < a.x + a.w + 2 && a.y < b.y + b.h + 2 && b.y < a.y + a.h + 2; }
+
+function labelRects(c, ox, oy, z){
+  return SECTIONS.map((s, i) => {
+    const act = secState(i) === 'active', x = (s.x - 40)*z + ox, y = (s.y - 196)*z + oy;
+    const nw = measure(c, act ? '600 13px ' + DISPLAY : '12px ' + MONO, s.label);
+    return {x: x - 3, y: y - 13, w: Math.max(nw, 132) + 6, h: 30};
+  });
+}
+function drawTags(c, ox, oy, z, cw, ch, initial){
+  const small = cw < 640, font = (small ? 9 : 10) + 'px ' + MONO, th = small ? 13 : 14;
+  const cands = [];
+  for (const w of WORDS){
+    if (!w.read || w.stop) continue;
+    const st = secState(w.sec), special = !!(w.vague || w.kind);
+    let pri, a;
+    if (S.done){ if (!special) continue; pri = w.vague ? 3 : 2; a = 0.85; }
+    else if (st === 'active'){ const age = now - w.readT; pri = w.vague ? 4 : w.kind ? 3 : (age < 1.2 ? 2 : 1); a = special ? 1 : Math.max(0.42, 1 - age/4); }
+    else { if (!special) continue; pri = w.vague ? 2 : 1; a = 0.4; }
+    const x = w.x*z + ox, y = w.y*z + oy;
+    if (x < -160 || x > cw + 20 || y < -20 || y > ch + 20) continue;
+    cands.push({w, x, y, pri, a});
+  }
+  cands.sort((p, q) => q.pri - p.pri || q.w.readT - p.w.readT);
+  const max = S.done ? (small ? 8 : 26) : (small ? 30 : 64);
+  const placed = initial || []; let count = 0;
+  c.textBaseline = 'middle'; c.textAlign = 'left'; c.lineWidth = 1;
+  for (const cd of cands){
+    if (count >= max) break;
+    const text = tagText(cd.w), tw = measure(c, font, text) + 8;
+    const offs = [[7, -7 - th], [7, 7], [-7 - tw, -7 - th], [-7 - tw, 7]];
+    let ok = null;
+    for (const o of offs){
+      const r = {x: cd.x + o[0], y: cd.y + o[1], w: tw, h: th};
+      if (r.x < 2 || r.x + r.w > cw - 2 || r.y < 2 || r.y + r.h > ch - 2) continue;
+      if (!placed.some(p => overlap(p, r))){ ok = r; break; }
+      if (cd.pri < 2) break;
+    }
+    if (!ok) continue;
+    placed.push(ok); count++;
+    const w = cd.w, col = SECTIONS[w.sec].rgb;
+    c.globalAlpha = cd.a;
+    c.strokeStyle = rgba(w.vague ? PINK : col, 0.55);
+    const ex = ok.x + (ok.x > cd.x ? 0 : ok.w), ey = ok.y + (ok.y > cd.y ? 0 : ok.h);
+    c.beginPath(); c.moveTo(cd.x, cd.y); c.lineTo(ex, ey); c.stroke();
+    c.font = font;
+    if (w.vague){
+      c.fillStyle = '#ff5c8a'; c.fillRect(ok.x, ok.y, ok.w, ok.h);
+      c.fillStyle = '#12060b'; c.fillText(text, ok.x + 4, ok.y + ok.h/2 + 0.5);
+    } else {
+      c.fillStyle = 'rgba(7,7,11,0.86)'; c.fillRect(ok.x, ok.y, ok.w, ok.h);
+      c.strokeStyle = rgba(col, w.kind ? 0.9 : 0.5); c.strokeRect(ok.x + 0.5, ok.y + 0.5, ok.w - 1, ok.h - 1);
+      c.fillStyle = w.kind ? rgba(mix(col, WHITE, 0.25), 1) : 'rgba(222,221,232,0.85)';
+      c.fillText(text, ok.x + 4, ok.y + ok.h/2 + 0.5);
+    }
+  }
+  c.globalAlpha = 1;
+}
+
+function drawLabels(c, ox, oy, z, cw, ch){
+  c.textAlign = 'left'; c.textBaseline = 'alphabetic';
+  SECTIONS.forEach((s, i) => {
+    const st = secState(i), n = SEC_WORDS[i].length, r = S.secs[i].read;
+    const x = (s.x - 40)*z + ox, y = (s.y - 196)*z + oy;
+    if (x < -150 || x > cw + 10 || y < -14 || y > ch + 30) return;
+    const act = st === 'active';
+    c.font = act ? '600 13px ' + DISPLAY : '12px ' + MONO;
+    c.fillStyle = act ? s.color : st === 'done' ? 'rgba(222,221,232,0.85)' : 'rgba(150,150,168,0.75)';
+    c.fillText(s.label, x, y);
+    const word = !n ? (st === 'queued' ? 'queued' : 'missing') : st === 'done' ? 'done' : act ? (S.phase === 'walk' ? 'next' : 'reading') : 'queued';
+    c.font = '9px ' + MONO;
+    c.fillStyle = (!n && st !== 'queued') ? 'rgba(255,92,138,0.95)' : 'rgba(130,130,148,0.9)';
+    c.fillText(r + '/' + n + ' words · ' + word, x, y + 13);
+  });
+}
+
+/* ---------- panel canvases ---------- */
+function drawRadar(){
+  const p = pcs.radar, c = p.c, w = p.w, h = p.h;
+  c.clearRect(0, 0, w, h);
+  const cx = w/2, cy = h/2 + 1, R = Math.max(10, Math.min(w/2 - 27, h/2 - 12)), n = 7;
+  const ang = i => -Math.PI/2 + i*2*Math.PI/n;
+  c.lineWidth = 1; c.strokeStyle = '#1f1f2a';
+  for (let k = 1; k <= 4; k++){
+    c.beginPath();
+    for (let i = 0; i <= n; i++){ const a = ang(i % n), r = R*k/4, x = cx + Math.cos(a)*r, y = cy + Math.sin(a)*r; if (i) c.lineTo(x, y); else c.moveTo(x, y); }
+    c.stroke();
+  }
+  for (let i = 0; i < n; i++){ c.beginPath(); c.moveTo(cx, cy); c.lineTo(cx + Math.cos(ang(i))*R, cy + Math.sin(ang(i))*R); c.stroke(); }
+  c.beginPath();
+  for (let i = 0; i <= n; i++){ const v = Math.max(0.04, S.radarView[i % n]), a = ang(i % n), x = cx + Math.cos(a)*R*v, y = cy + Math.sin(a)*R*v; if (i) c.lineTo(x, y); else c.moveTo(x, y); }
+  c.closePath(); c.fillStyle = 'rgba(95,211,176,0.4)'; c.fill(); c.strokeStyle = 'rgba(95,211,176,0.95)'; c.stroke();
+  c.font = '8px ' + MONO; c.textAlign = 'center'; c.textBaseline = 'middle';
+  for (let i = 0; i < n; i++){
+    const a = ang(i);
+    c.fillStyle = (!S.done && i === S.sec) ? SECTIONS[i].color : '#6d6d80';
+    c.fillText(SECTIONS[i].axis, cx + Math.cos(a)*(R + 13), cy + Math.sin(a)*(R + 8));
+  }
+}
+function drawHeat(){
+  const p = pcs.heat, c = p.c, w = p.w, h = p.h;
+  c.clearRect(0, 0, w, h);
+  const cols = 14, rows = 7, lw = 25, gap = 2, rg = 4;
+  const cwid = (w - lw)/cols - gap, rh = (h - (rows - 1)*rg)/rows;
+  c.font = '8px ' + MONO; c.textBaseline = 'middle'; c.textAlign = 'left';
+  for (let r = 0; r < rows; r++){
+    const y = r*(rh + rg), ids = SEC_WORDS[r], n = ids.length, s = SECTIONS[r];
+    c.fillStyle = (!S.done && r === S.sec) ? s.color : '#5d5d6e';
+    c.fillText(s.short, 0, y + rh/2);
+    for (let k = 0; k < cols; k++){
+      const x = lw + k*(cwid + gap);
+      if (!n || (n < cols && k >= n)){ c.fillStyle = '#0f0f16'; c.fillRect(x, y, cwid, rh); continue; }
+      const a = n >= cols ? Math.floor(k*n/cols) : k, b = n >= cols ? Math.floor((k + 1)*n/cols) : k + 1;
+      let rd = 0, fl = false, cur = false;
+      for (let j = a; j < b; j++){ const ww = WORDS[ids[j]]; if (ww.read){ rd++; if (ww.vague) fl = true; } if (ww.idx === S.cur) cur = true; }
+      const f = rd / Math.max(1, b - a);
+      c.fillStyle = cur ? '#ffffff' : fl ? '#ff5c8a' : f > 0 ? rgba(s.rgb, 0.3 + 0.7*f) : '#1b1b25';
+      c.fillRect(x, y, cwid, rh);
+    }
+  }
+}
+function drawScore(){
+  const p = pcs.score, c = p.c, w = p.w, h = p.h;
+  c.clearRect(0, 0, w, h);
+  const sh = 34, hist = S.hist, N = 80;
+  c.strokeStyle = '#1a1a24'; c.lineWidth = 1;
+  c.beginPath(); c.moveTo(0, sh + 0.5); c.lineTo(w, sh + 0.5); c.stroke();
+  if (hist.length > 1){
+    const step = w/(N - 1), start = N - hist.length;
+    const pts = hist.map((v, i) => [(start + i)*step, sh - 2 - v/100*(sh - 6)]);
+    c.beginPath(); pts.forEach((q, i) => { if (i) c.lineTo(q[0], q[1]); else c.moveTo(q[0], q[1]); });
+    c.lineTo(pts[pts.length - 1][0], sh); c.lineTo(pts[0][0], sh); c.closePath();
+    c.fillStyle = 'rgba(240,192,96,0.08)'; c.fill();
+    c.beginPath(); pts.forEach((q, i) => { if (i) c.lineTo(q[0], q[1]); else c.moveTo(q[0], q[1]); });
+    c.strokeStyle = '#f0c060'; c.lineWidth = 1.2; c.stroke();
+    const e = pts[pts.length - 1]; c.fillStyle = '#f0c060'; c.beginPath(); c.arc(e[0] - 1.5, e[1], 2, 0, 6.283); c.fill();
+  }
+  const gx = w/2, gy = sh + 44, R = 29, a0 = Math.PI*0.75, a1 = Math.PI*2.25;
+  c.lineWidth = 4; c.lineCap = 'round';
+  c.strokeStyle = '#1d1d28'; c.beginPath(); c.arc(gx, gy, R, a0, a1); c.stroke();
+  const v = clamp(S.scoreView/100, 0, 1), col = v < 0.5 ? PINK : v < 0.8 ? AMBER : TEAL;
+  if (v > 0.005){ c.strokeStyle = rgba(col, 1); c.beginPath(); c.arc(gx, gy, R, a0, a0 + (a1 - a0)*v); c.stroke(); }
+  c.lineCap = 'butt';
+  c.fillStyle = '#dedde8'; c.font = '600 18px ' + DISPLAY; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillText(String(Math.round(S.scoreView)), gx, gy);
+  c.font = '8px ' + MONO; c.fillStyle = '#7a7a8e'; c.fillText('spec score', gx, gy + R + 8);
+}
+
+/* ---------- code panel ---------- */
+const CODE = `# crawler.py · reads a prompt
+graph = load("studio.prompt")
+spider = Crawler(legs=16)
+
+for sec in graph.sections:
+  spider.walk(sec)
+  for w in sec.words:
+    n = spider.read(w)
+    if n.vague:
+      spider.flag(n)  # ask
+    spider.link(n)
+  score.update(sec)
+
+spider.ship(score)`;
+const CODE_LINES = CODE.split('\n').length;
+const CODE_TOKENS = (() => {
+  const out = [], re = /(#[^\n]*)|("[^"\n]*")|\b(for|in|if|not|and|or|return)\b|\b(\d+)\b|([A-Za-z_]\w*)(?=\()|(\n)|(\w+|[^#"\n\w]+)/g;
+  let m;
+  while ((m = re.exec(CODE))) out.push({t: m[0], cls: m[1] ? 'cm' : m[2] ? 'st' : m[3] ? 'kw' : m[4] ? 'nu' : m[5] ? 'fn' : ''});
+  return out;
+})();
+let lastTyped = -1;
+function renderCode(){
+  const prog = S.done ? 1 : S.step / Math.max(1, STEPS.length - 1);
+  const typed = Math.round(CODE.length * prog);
+  if (typed === lastTyped) return;
+  lastTyped = typed;
+  let left = typed, html = '';
+  for (const tk of CODE_TOKENS){
+    if (left <= 0) break;
+    const t = tk.t.slice(0, left); left -= t.length;
+    html += tk.cls ? '<span class="' + tk.cls + '">' + esc(t) + '</span>' : esc(t);
+  }
+  $('code').innerHTML = html + '<span class="cur"></span>';
+  $('pLines').textContent = CODE.slice(0, typed).split('\n').length + '/' + CODE_LINES;
+}
+
+/* ---------- DOM sync ---------- */
+const tabsEl = $('tabs');
+const TAB_DEFS = SECTIONS.concat([SHIP]);
+tabsEl.innerHTML = TAB_DEFS.map((s, i) => '<button type="button" class="tab" data-i="' + i + '" style="--tab:' + s.color + '">' + s.label + '</button>').join('');
+
+function setText(el, v){ if (el._v !== v){ el._v = v; el.textContent = v; } }
+function setHtml(el, v){ if (el._v !== v){ el._v = v; el.innerHTML = v; } }
+let lastVer = -1, lastQ = -1;
+
+function statusHtml(){
+  if (S.done){ const q = S.questions.length; return 'spec ready · score <b>' + S.score + '</b> · <b>' + q + '</b> ' + (q === 1 ? 'question' : 'questions') + ' to ask'; }
+  const s = SECTIONS[S.sec], n = SEC_WORDS[S.sec].length;
+  if (!S.playing) return 'paused · <b>' + s.label + '</b> ' + S.secs[S.sec].read + '/' + n;
+  if (S.phase === 'walk') return 'walking → <b>' + s.label + '</b>';
+  return 'reading <b>' + s.label + '</b> · ' + Math.round(S.rate.length/1.5) + ' w/s';
+}
+function gradeText(){
+  if (!S.done) return 'scoring as it reads';
+  const q = S.questions.length;
+  if (!q) return S.score >= 85 ? 'ready to run' : S.score >= 60 ? 'thin in places' : 'underspecified';
+  return S.score >= 60 ? 'answer ' + q + ' first' : 'underspecified';
+}
+
+function syncDom(){
+  setText($('hWords'), S.read + '/' + TOTAL);
+  setText($('hLinks'), String(S.links));
+  setText($('hFlags'), String(S.flags));
+  setText($('hT'), S.t.toFixed(2));
+  setText($('hFrame'), pad(S.frame % 10000, 4));
+  const wps = S.playing && !S.done ? Math.round(S.rate.length/1.5) : 0;
+  setText($('pRate'), wps + ' w/s');
+  setText($('pWpm'), (wps*60) + '/m');
+  setHtml($('status'), statusHtml());
+  const pb = $('playBtn'), rb = $('replayBtn');
+  setText(pb, S.done ? '↻ Replay' : S.playing ? '❚❚ Pause' : '▶︎ Play');
+  if (rb.hidden !== S.done) rb.hidden = S.done;
+
+  if (S.logDirty){
+    S.logDirty = false;
+    $('log').innerHTML = S.log.slice(-24).map(l => '<div><span class="tm">' + l.tm + '</span><span class="vb ' + l.verb + '">' + l.verb + '</span><span class="tx">' + esc(l.text) + '</span></div>').join('');
+  }
+
+  if (S.ver !== lastVer){
+    lastVer = S.ver;
+    const ai = S.done ? 7 : S.sec;
+    tabsEl.querySelectorAll('.tab').forEach((b, i) => {
+      const done = i < 7 && (S.done || i < S.sec), act = i === ai;
+      b.classList.toggle('is-done', done && !act);
+      b.classList.toggle('is-active', act);
+      if (act) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current');
+    });
+    const def = TAB_DEFS[ai];
+    $('sechead').style.setProperty('--sec', def.color);
+    setText($('secNum'), pad(ai + 1, 2) + ' ' + def.title);
+    if (S.done) setText($('secSub'), 'spec · score · ' + S.questions.length + ' to ask · ' + TOTAL + ' words');
+    else { const n = SEC_WORDS[ai].length; setText($('secSub'), n ? SECTIONS[ai].desc + ' · ' + n + ' words' : 'missing · this section has no text'); }
+
+    $('secs').innerHTML = SECTIONS.map((s, i) => {
+      const n = SEC_WORDS[i].length, r = S.secs[i].read, st = secState(i);
+      const miss = !n && st !== 'queued';
+      return '<div class="srow ' + st + (miss ? ' missing' : '') + '" style="--c:' + s.color + '"><div class="sl"><span>' + s.label + '</span><span>' + (miss ? 'missing' : r + '/' + n) + '</span></div><div class="sb"><i style="width:' + (n ? r/n*100 : 0) + '%"></i></div></div>';
+    }).join('');
+
+    const kb = [['claims', S.kinds.claim], ['owners', S.owners.size], ['approvals', S.kinds.approval]];
+    const km = Math.max(6, ...kb.map(k => k[1]));
+    $('kbars').innerHTML = kb.map(k => '<div class="kb"><span>' + k[0] + '</span><span class="tr"><i style="width:' + (k[1]/km*100) + '%"></i></span><b>' + k[1] + '</b></div>').join('');
+
+    $('kv').innerHTML = '<div><span>read</span><b>' + S.read + '</b></div><div><span>linked</span><b>' + S.links + '</b></div><div><span>flagged</span><b>' + S.flags + '</b></div><div class="g"><span>guessed</span><b>0</b></div>';
+    setText($('pTotal'), String(TOTAL));
+    setText($('grade'), gradeText());
+    setText($('pFlags'), 'flags to ask · ' + S.flags);
+  }
+
+  if (S.questions.length !== lastQ || (S.done && lastQ !== -2 && S.questions.length === 0)){
+    lastQ = S.questions.length;
+    const q = S.questions;
+    setText($('qCount'), q.length ? q.length + ' open' : '');
+    if (!q.length){
+      $('qList').innerHTML = '<li class="qempty"><span class="qt">' + (S.done ? 'No open questions. Every section is specific enough to run.' : 'Nothing yet. Vague words and missing sections land here as the crawler finds them.') + '</span></li>';
+      if (S.done) lastQ = -2;
+    } else {
+      $('qList').innerHTML = q.map((x, i) => '<li style="--c:' + SECTIONS[x.sec].color + '"><span class="qn">' + pad(i + 1, 2) + '</span><span class="qs">' + SECTIONS[x.sec].title + '</span><span class="qt">' + esc(x.text) + (x.snip ? '<span class="qx">' + x.snip + '</span>' : '') + '</span></li>').join('');
+    }
+  }
+  renderCode();
+}
+
+/* ---------- controls ---------- */
+$('playBtn').addEventListener('click', () => {
+  if (S.done){ S.playing = true; replay(); return; }
+  S.playing = !S.playing;
+});
+$('replayBtn').addEventListener('click', () => { S.playing = true; replay(); });
+document.querySelectorAll('.seg button').forEach(b => b.addEventListener('click', () => {
+  speed = parseFloat(b.dataset.speed);
+  document.querySelectorAll('.seg button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+}));
+tabsEl.addEventListener('click', e => {
+  const b = e.target.closest('.tab'); if (!b) return;
+  const i = +b.dataset.i;
+  const target = i === 7 ? STEPS.length - 1 : STEPS.findIndex(st => st.type === 'walk' && st.s === i);
+  if (target >= 0) seekTo(target, false);
+});
+document.addEventListener('keydown', e => {
+  if (e.code !== 'Space') return;
+  const tg = e.target.tagName;
+  if (tg === 'TEXTAREA' || tg === 'INPUT' || tg === 'BUTTON' || tg === 'SUMMARY') return;
+  e.preventDefault();
+  if (S.done){ S.playing = true; replay(); } else S.playing = !S.playing;
+});
+
+const ta = $('promptInput'), editor = $('editor');
+$('editBtn').addEventListener('click', () => {
+  editor.open = true;
+  editor.scrollIntoView({behavior: RM ? 'auto' : 'smooth', block: 'start'});
+  setTimeout(() => ta.focus({preventScroll: true}), RM ? 0 : 350);
+});
+let saveTimer = 0;
+ta.addEventListener('input', () => {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => { try { localStorage.setItem(KEY, ta.value); } catch (err) {} }, 400);
+});
+let lastGood = SAMPLE;
+$('crawlBtn').addEventListener('click', () => {
+  const text = ta.value;
+  buildModel(text);
+  if (!TOTAL){
+    $('edStatus').textContent = 'No words found. Add text under at least one section header, such as OBJECTIVE:.';
+    buildModel(lastGood); seekTo(S.done ? STEPS.length - 1 : 0, false); return;
+  }
+  lastGood = text;
+  try { localStorage.setItem(KEY, text); } catch (err) {}
+  const filled = SEC_WORDS.filter(a => a.length).length;
+  $('edStatus').textContent = 'Crawling ' + TOTAL + ' words across ' + filled + ' of 7 sections.';
+  S.playing = true; replay();
+  stage.scrollIntoView({behavior: RM ? 'auto' : 'smooth', block: 'center'});
+});
+$('sampleBtn').addEventListener('click', () => {
+  ta.value = SAMPLE;
+  try { localStorage.setItem(KEY, SAMPLE); } catch (err) {}
+  $('edStatus').textContent = 'Sample loaded. Press Crawl this prompt to run it.';
+});
+$('copyBtn').addEventListener('click', () => {
+  const q = S.questions;
+  const text = q.length ? q.map((x, i) => (i + 1) + '. [' + SECTIONS[x.sec].title + '] ' + x.text).join('\n') : 'No open questions.';
+  const btn = $('copyBtn'), fb = $('copyFb'), note = $('copyNote');
+  const fallback = () => { fb.value = text; fb.hidden = false; note.hidden = false; fb.focus(); fb.select(); };
+  try {
+    navigator.clipboard.writeText(text).then(() => {
+      btn.textContent = 'Copied'; fb.hidden = true; note.hidden = true;
+      setTimeout(() => { btn.textContent = 'Copy questions'; }, 1600);
+    }, fallback);
+  } catch (err) { fallback(); }
+});
+
+/* ---------- boot ---------- */
+let startText = SAMPLE;
+try { const d = localStorage.getItem(KEY); if (d && d.trim()) startText = d; } catch (err) {}
+ta.value = startText;
+buildModel(startText);
+if (!TOTAL){ startText = SAMPLE; ta.value = SAMPLE; buildModel(SAMPLE); }
+lastGood = startText;
+
+if (RM){ S = freshState(false); seekTo(STEPS.length - 1, false); cam.x = W/2; cam.y = H/2; cam.z = fitZ; for (let i = 0; i < heat.length; i++) heat[i] = 0.8; }
+else { S = freshState(true); replay(); }
+
+let last = performance.now();
+function frame(t){
+  const dt = Math.min(0.05, Math.max(0, (t - last)/1000)); last = t; now = t/1000;
+  if (S.playing && !S.done){ advance(dt); S.t += dt; S.frame++; }
+  updateWorld(dt);
+  if (mapVisible) renderMap();
+  drawRadar(); drawHeat(); drawScore();
+  syncDom();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
